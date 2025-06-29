@@ -3,6 +3,11 @@
 Canvas Deadline Reminder App
 A CLI application that integrates with Canvas LMS API to send automated assignment reminders
 with detailed information via Facebook Messenger.
+
+# Deployment Instructions
+# - To run locally as a CLI: python app.py [args]
+# - To run on Render (web server): gunicorn app:flask_app
+# - The web server section is for Render deployment and does not affect CLI usage.
 """
 
 import requests
@@ -16,6 +21,8 @@ import logging
 from dataclasses import dataclass
 import sys
 import os
+# Add Flask for Render deployment
+from flask import Flask, jsonify
 
 # Third-party imports for notifications
 try:
@@ -40,6 +47,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Flask app for Render deployment
+# This section enables deployment on Render and does not affect CLI usage.
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def health_check():
+    # Health check endpoint for Render
+    return jsonify({"status": "ok"})
+
+# Optionally, add an endpoint to trigger reminders (example)
+# @flask_app.route("/send-reminders", methods=["POST"])
+# def trigger_reminders():
+#     # Endpoint for manual testing or webhook integration on Render
+#     app = CanvasReminderApp()
+#     app.send_scheduled_reminders()
+#     return jsonify({"status": "reminders sent"})
 
 @dataclass
 class Assignment:
@@ -735,6 +758,7 @@ class CanvasReminderApp:
             f"You should have received individual messages for each assignment above."
         )
         self.notification_service.send_facebook_message(summary_message)
+
 def main():
     """Main CLI entry point"""
     parser = argparse.ArgumentParser(description="Canvas Deadline Reminder App with Detailed Facebook Messages")
@@ -747,10 +771,16 @@ def main():
         '--assignment', 
         help='Assignment name to get details for (use with details command)'
     )
+    parser.add_argument('--web', action='store_true', help='Run as a web server (for Render deployment)')
     
     args = parser.parse_args()
     app = CanvasReminderApp()
     
+    if args.web:
+        port = int(os.environ.get("PORT", 10000))  # PORT is set by Render
+        flask_app.run(host="0.0.0.0", port=port)
+        return
+
     if args.command == 'start':
         print("Starting Canvas Reminder daemon...")
         print("Press Ctrl+C to stop")
@@ -786,3 +816,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Render deployment entrypoint: gunicorn app:flask_app  # For Render deployment only
