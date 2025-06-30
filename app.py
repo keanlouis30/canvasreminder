@@ -26,6 +26,7 @@ from flask import Flask, jsonify, request, send_file
 import io
 import threading
 from collections import deque
+import random
 
 
 # Third-party imports for notifications
@@ -773,6 +774,10 @@ RECENT_MESSAGES = deque(maxlen=200)  # store up to 200 recent messages
 RECENT_MESSAGES_LOCK = threading.Lock()
 DEDUPLICATION_WINDOW_SECONDS = 120  # 2 minutes
 
+RANDOM_EMOJIS = [
+    '📚', '📝', '💡', '🎯', '📖', '🧠', '✨', '🚀', '🎓', '🔔', '📅', '🕒', '🔬', '💻', '🎨', '🏆', '🧮', '🏛️', '💼', '🤝', '🏃'
+]
+
 @flask_app.route("/webhook", methods=["GET", "POST"])
 def facebook_webhook():
     if request.method == "GET":
@@ -861,14 +866,21 @@ def handle_user_message(sender_id, message):
             return
     send_quick_replies(sender_id, "What would you like to do?", get_main_quick_replies())
 
+
+
 def send_all_tasks_individually(sender_id, canvas_assignments):
     # Only send Canvas assignments
     if canvas_assignments:
         for a in canvas_assignments:
             due_str = a.due_datetime.strftime('%Y-%m-%d %H:%M') if a.due_datetime else 'No due date'
+            emoji = random.choice(RANDOM_EMOJIS)
+            title_line = f"|Title: {a.name}|"
+            border = '-' * len(title_line)
             msg = (
-                f"*Canvas Assignment*\n"
-                f"*Title:* _{a.name}_\n"
+                f"{emoji}\n"
+                f"{border}\n"
+                f"{title_line}\n"
+                f"{border}\n"
                 f"*Course:* _{a.course_name}_\n"
                 f"*Due:* `{due_str}`\n"
                 f"*Points:* _{a.points_possible if a.points_possible else 'N/A'}_\n"
