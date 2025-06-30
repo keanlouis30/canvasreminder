@@ -855,15 +855,6 @@ def handle_user_message(sender_id, message):
             user_states[sender_id] = {"adding_event": True, "step": "what"}
             send_quick_replies(sender_id, "WHAT: What is the event?", [])
             return
-        elif quick_reply == "GEN_CAL":
-            # Generate and send calendar image (stub)
-            img = generate_calendar_image(sender_id)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            # Facebook requires image upload via API, but for demo, send a text
-            send_quick_replies(sender_id, "[Calendar image would be sent here]", get_main_quick_replies())
-            return
         elif quick_reply == "URGENT_TASKS":
             urgent = [e for e in USER_EVENTS if e["user"] == sender_id and e["urgency"] in ("critical", "urgent")]
             if not urgent:
@@ -878,21 +869,8 @@ def handle_user_message(sender_id, message):
 def get_main_quick_replies():
     return [
         {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"},
-        {"content_type": "text", "title": "Generate Calendar", "payload": "GEN_CAL"},
         {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"}
     ]
-
-def generate_calendar_image(user_id):
-    # Stub: create a blank image with event list for the week
-    img = Image.new("RGB", (600, 400), color=(255, 255, 255))
-    d = ImageDraw.Draw(img)
-    d.text((10, 10), "Your Events This Week:", fill=(0, 0, 0))
-    y = 40
-    week_events = [e for e in USER_EVENTS if e["user"] == user_id]
-    for e in week_events:
-        d.text((10, y), f"{e['what']} @ {e['when']} ({e['where']})", fill=(0, 0, 0))
-        y += 25
-    return img
 
 def main():
     """Main CLI entry point"""
