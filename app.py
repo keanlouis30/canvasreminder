@@ -806,9 +806,21 @@ def send_quick_replies(recipient_id, text, quick_replies):
 def handle_user_message(sender_id, message):
     text = message.get("text", "").strip()
     quick_reply = message.get("quick_reply", {}).get("payload")
+    mid = message.get("mid")
     if not hasattr(handle_user_message, "user_states"):
         handle_user_message.user_states = {}
+    if not hasattr(handle_user_message, "last_message_ids"):
+        handle_user_message.last_message_ids = {}
     user_states = handle_user_message.user_states
+    last_message_ids = handle_user_message.last_message_ids
+
+    # Deduplication: skip if we've already processed this message ID for this user
+    if mid and last_message_ids.get(sender_id) == mid:
+        logger.info(f"Duplicate message detected for user {sender_id}, mid {mid}, skipping.")
+        return
+    if mid:
+        last_message_ids[sender_id] = mid
+
     state = user_states.get(sender_id, {})
 
     if state.get("adding_event"):
@@ -872,11 +884,11 @@ def handle_user_message(sender_id, message):
                 "urgency": urgency
             })
             summary = (
-                f"Event added!\n"
-                f"WHAT: {state['what']}\n"
-                f"WHEN: {state['when']}\n"
-                f"WHERE: {state['where']}\n"
-                f"DESCRIPTION: {state['description']}"
+                f"*Event added!*\n"
+                f"*WHAT:* _{state['what']}_\n"
+                f"*WHEN:* `{state['when']}`\n"
+                f"*WHERE:* _{state['where']}_\n"
+                f"*DESCRIPTION:* _{state['description']}_"
             )
             send_quick_replies(sender_id, summary, get_main_quick_replies())
             user_states[sender_id] = {}
@@ -893,7 +905,7 @@ def handle_user_message(sender_id, message):
             if not urgent:
                 send_quick_replies(sender_id, "No urgent tasks for today!", get_main_quick_replies())
             else:
-                msg = "URGENT TASKS TODAY:\n" + "\n".join(f"- {e['what']} at {e['when']} ({e['urgency']})" for e in urgent)
+                msg = "*URGENT TASKS TODAY:*\n" + "\n".join(f"*{e['what']}* at `{e['when']}` (*_{e['urgency'].upper()}_*)" for e in urgent)
                 send_quick_replies(sender_id, msg, get_main_quick_replies())
             return
         elif quick_reply == "ALL_TASKS":
@@ -910,12 +922,12 @@ def send_all_tasks_individually(sender_id, user_events, canvas_assignments):
     if user_events:
         for e in user_events:
             msg = (
-                f"Custom Event\n"
-                f"Title: {e['what']}\n"
-                f"When: {e['when']}\n"
-                f"Where: {e['where']}\n"
-                f"Description: {e['description']}\n"
-                f"Urgency: {e['urgency']}"
+                f"*Custom Event*\n"
+                f"*Title:* _{e['what']}_\n"
+                f"*When:* `{e['when']}`\n"
+                f"*Where:* _{e['where']}_\n"
+                f"*Description:* _{e['description']}_\n"
+                f"*Urgency:* *_{e['urgency'].upper()}_*"
             )
             send_quick_replies(sender_id, msg, [])
     else:
@@ -925,12 +937,12 @@ def send_all_tasks_individually(sender_id, user_events, canvas_assignments):
         for a in canvas_assignments:
             due_str = a.due_datetime.strftime('%Y-%m-%d %H:%M') if a.due_datetime else 'No due date'
             msg = (
-                f"Canvas Assignment\n"
-                f"Title: {a.name}\n"
-                f"Course: {a.course_name}\n"
-                f"Due: {due_str}\n"
-                f"Points: {a.points_possible if a.points_possible else 'N/A'}\n"
-                f"Link: {a.html_url}"
+                f"*Canvas Assignment*\n"
+                f"*Title:* _{a.name}_\n"
+                f"*Course:* _{a.course_name}_\n"
+                f"*Due:* `{due_str}`\n"
+                f"*Points:* _{a.points_possible if a.points_possible else 'N/A'}_\n"
+                f"*Link:* `{a.html_url}`"
             )
             send_quick_replies(sender_id, msg, [])
     else:
