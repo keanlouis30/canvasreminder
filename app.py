@@ -811,25 +811,28 @@ def handle_user_message(sender_id, message):
     user_states = handle_user_message.user_states
     state = user_states.get(sender_id, {})
 
-    # If in the middle of adding event
     if state.get("adding_event"):
         step = state.get("step", "what")
+
         if step == "what":
             send_quick_replies(sender_id, "What: What is the event?", [])
             state["step"] = "what_response"
             user_states[sender_id] = state
             return
+
         elif step == "what_response":
             state["what"] = text
             state["step"] = "when"
             user_states[sender_id] = state
             send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
             return
+
         elif step == "when":
             send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
             state["step"] = "when_response"
             user_states[sender_id] = state
             return
+
         elif step == "when_response":
             try:
                 event_time = datetime.strptime(text, "%Y-%m-%d %H:%M")
@@ -841,22 +844,26 @@ def handle_user_message(sender_id, message):
             except ValueError:
                 send_quick_replies(sender_id, "Invalid date/time format. Please use YYYY-MM-DD HH:MM (24-hour)", [])
                 return
+
         elif step == "where":
             send_quick_replies(sender_id, "Where: Where is the event?", [])
             state["step"] = "where_response"
             user_states[sender_id] = state
             return
+
         elif step == "where_response":
             state["where"] = text
             state["step"] = "description"
             user_states[sender_id] = state
             send_quick_replies(sender_id, "Description: What is this work for?", [])
             return
+
         elif step == "description":
             send_quick_replies(sender_id, "Description: What is this work for?", [])
             state["step"] = "description_response"
             user_states[sender_id] = state
             return
+
         elif step == "description_response":
             state["description"] = text
             try:
@@ -898,13 +905,10 @@ def handle_user_message(sender_id, message):
                 send_quick_replies(sender_id, msg, get_main_quick_replies())
             return
         elif quick_reply == "ALL_TASKS":
-            # Gather user events
             all_events = [e for e in USER_EVENTS if e["user"] == sender_id]
-            # Gather Canvas assignments (fetch fresh)
             app = CanvasReminderApp()
             app.update_assignments()
             canvas_assignments = app.assignments_cache
-            # Format both
             msg = format_all_tasks_message(all_events, canvas_assignments)
             send_quick_replies(sender_id, msg, get_main_quick_replies())
             return
