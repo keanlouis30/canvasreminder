@@ -24,6 +24,8 @@ import os
 # Add Flask for Render deployment
 from flask import Flask, jsonify, request, send_file
 import io
+import threading
+from collections import deque
 
 
 # Third-party imports for notifications
@@ -766,6 +768,11 @@ class CanvasReminderApp:
 # In-memory event store (for demo; replace with DB for production)
 USER_EVENTS = []
 
+# In-memory deduplication cache: stores (user_id, text, timestamp) for recent messages
+RECENT_MESSAGES = deque(maxlen=200)  # store up to 200 recent messages
+RECENT_MESSAGES_LOCK = threading.Lock()
+DEDUPLICATION_WINDOW_SECONDS = 120  # 2 minutes
+
 @flask_app.route("/webhook", methods=["GET", "POST"])
 def facebook_webhook():
     if request.method == "GET":
@@ -782,7 +789,27 @@ def facebook_webhook():
             for messaging_event in entry.get("messaging", []):
                 sender_id = messaging_event["sender"]["id"]
                 if "message" in messaging_event:
-                    handle_user_message(sender_id, messaging_event["message"])
+                    # Deduplication by (user_id, text, timestamp window)
+                    message = messaging_event["message"]
+                    text = message.get("text", "").strip()
+                    ts = messaging_event.get("timestamp")
+                    is_duplicate = False
+                    now = int(time.time() * 1000)  # ms
+                    with RECENT_MESSAGES_LOCK:
+                        # Remove old entries
+                        while RECENT_MESSAGES and now - RECENT_MESSAGES[0][2] > DEDUPLICATION_WINDOW_SECONDS * 1000:
+                            RECENT_MESSAGES.popleft()
+                        # Check for duplicate
+                        for uid, t, tstamp in RECENT_MESSAGES:
+                            if uid == sender_id and t == text and abs(ts - tstamp) < DEDUPLICATION_WINDOW_SECONDS * 1000:
+                                is_duplicate = True
+                                break
+                        if not is_duplicate:
+                            RECENT_MESSAGES.append((sender_id, text, ts))
+                    if is_duplicate:
+                        logger.info(f"Duplicate message detected for user {sender_id}, text '{text}', ts {ts}, skipping.")
+                        continue
+                    handle_user_message(sender_id, message)
     return "ok", 200
 
 def send_quick_replies(recipient_id, text, quick_replies):
