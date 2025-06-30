@@ -22,7 +22,9 @@ from dataclasses import dataclass
 import sys
 import os
 # Add Flask for Render deployment
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, send_file
+import io
+from PIL import Image, ImageDraw, ImageFont
 
 # Third-party imports for notifications
 try:
@@ -758,6 +760,139 @@ class CanvasReminderApp:
             f"You should have received individual messages for each assignment above."
         )
         self.notification_service.send_facebook_message(summary_message)
+
+# In-memory event store (for demo; replace with DB for production)
+USER_EVENTS = []
+
+@flask_app.route("/webhook", methods=["GET", "POST"])
+def facebook_webhook():
+    if request.method == "GET":
+        # Facebook webhook verification
+        verify_token = os.getenv("FB_VERIFY_TOKEN", "test-token")
+        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == verify_token:
+            return request.args.get("hub.challenge"), 200
+        return "Verification token mismatch", 403
+
+    # POST: handle incoming messages
+    data = request.get_json()
+    logger.info(f"Received webhook: {json.dumps(data)}")
+    if data.get("object") == "page":
+        for entry in data.get("entry", []):
+            for messaging_event in entry.get("messaging", []):
+                sender_id = messaging_event["sender"]["id"]
+                if "message" in messaging_event:
+                    handle_user_message(sender_id, messaging_event["message"])
+    return "ok", 200
+
+def send_quick_replies(recipient_id, text, quick_replies):
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {
+            "text": text,
+            "quick_replies": quick_replies
+        },
+        "messaging_type": "RESPONSE"
+    }
+    params = {"access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
+    response = requests.post(
+        "https://graph.facebook.com/v18.0/me/messages",
+        params=params,
+        json=payload,
+        headers={"Content-Type": "application/json"}
+    )
+    logger.info(f"Quick replies sent: {response.text}")
+    return response.ok
+
+def handle_user_message(sender_id, message):
+    text = message.get("text", "").strip().lower()
+    quick_reply = message.get("quick_reply", {}).get("payload")
+    # State tracking for event creation (in-memory, per session)
+    if not hasattr(handle_user_message, "user_states"):
+        handle_user_message.user_states = {}
+    user_states = handle_user_message.user_states
+    state = user_states.get(sender_id, {})
+
+    # If in the middle of adding event
+    if state.get("adding_event"):
+        step = state.get("step", "what")
+        if step == "what":
+            state["what"] = message.get("text", "")
+            state["step"] = "when"
+            send_quick_replies(sender_id, "WHEN: When is the event? (e.g. 2024-06-10 15:00)", [])
+        elif step == "when":
+            state["when"] = message.get("text", "")
+            state["step"] = "where"
+            send_quick_replies(sender_id, "WHERE: Where is the event?", [])
+        elif step == "where":
+            state["where"] = message.get("text", "")
+            state["step"] = "description"
+            send_quick_replies(sender_id, "DESCRIPTION: For what is this work for?", [])
+        elif step == "description":
+            state["description"] = message.get("text", "")
+            # Save event
+            try:
+                event_time = datetime.fromisoformat(state["when"])
+            except Exception:
+                event_time = None
+            urgency = "critical" if event_time and (event_time - datetime.now()).total_seconds() < 3600 else ("urgent" if event_time and (event_time - datetime.now()).total_seconds() < 6*3600 else "normal")
+            USER_EVENTS.append({
+                "user": sender_id,
+                "what": state["what"],
+                "when": state["when"],
+                "where": state["where"],
+                "description": state["description"],
+                "urgency": urgency
+            })
+            send_quick_replies(sender_id, f"Event added!\nWHAT: {state['what']}\nWHEN: {state['when']}\nWHERE: {state['where']}\nDESCRIPTION: {state['description']}", get_main_quick_replies())
+            user_states[sender_id] = {}
+            return
+        user_states[sender_id] = state
+        return
+
+    # Main menu quick replies
+    if quick_reply:
+        if quick_reply == "ADD_EVENT":
+            user_states[sender_id] = {"adding_event": True, "step": "what"}
+            send_quick_replies(sender_id, "WHAT: What is the event?", [])
+            return
+        elif quick_reply == "GEN_CAL":
+            # Generate and send calendar image (stub)
+            img = generate_calendar_image(sender_id)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            # Facebook requires image upload via API, but for demo, send a text
+            send_quick_replies(sender_id, "[Calendar image would be sent here]", get_main_quick_replies())
+            return
+        elif quick_reply == "URGENT_TASKS":
+            urgent = [e for e in USER_EVENTS if e["user"] == sender_id and e["urgency"] in ("critical", "urgent")]
+            if not urgent:
+                send_quick_replies(sender_id, "No urgent tasks for today!", get_main_quick_replies())
+            else:
+                msg = "URGENT TASKS TODAY:\n" + "\n".join(f"- {e['what']} at {e['when']} ({e['urgency']})" for e in urgent)
+                send_quick_replies(sender_id, msg, get_main_quick_replies())
+            return
+    # Default: show main menu
+    send_quick_replies(sender_id, "What would you like to do?", get_main_quick_replies())
+
+def get_main_quick_replies():
+    return [
+        {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"},
+        {"content_type": "text", "title": "Generate Calendar", "payload": "GEN_CAL"},
+        {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"}
+    ]
+
+def generate_calendar_image(user_id):
+    # Stub: create a blank image with event list for the week
+    img = Image.new("RGB", (600, 400), color=(255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 10), "Your Events This Week:", fill=(0, 0, 0))
+    y = 40
+    week_events = [e for e in USER_EVENTS if e["user"] == user_id]
+    for e in week_events:
+        d.text((10, y), f"{e['what']} @ {e['when']} ({e['where']})", fill=(0, 0, 0))
+        y += 25
+    return img
 
 def main():
     """Main CLI entry point"""
