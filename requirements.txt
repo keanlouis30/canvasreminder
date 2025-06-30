@@ -2,6 +2,7 @@
 requests==2.31.0
 schedule==1.2.0
 plyer==2.1.0  # Only needed for desktop notifications (not used on Render)
+Pillow==10.0.0  # For image processing (PIL)
 
 # Deployment dependencies
 Flask==2.3.3
