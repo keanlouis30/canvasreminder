@@ -805,7 +805,7 @@ def send_quick_replies(recipient_id, text, quick_replies):
     return response.ok
 
 def handle_user_message(sender_id, message):
-    text = message.get("text", "").strip().lower()
+    text = message.get("text", "").strip()
     quick_reply = message.get("quick_reply", {}).get("payload")
     # State tracking for event creation (in-memory, per session)
     if not hasattr(handle_user_message, "user_states"):
@@ -817,22 +817,56 @@ def handle_user_message(sender_id, message):
     if state.get("adding_event"):
         step = state.get("step", "what")
         if step == "what":
-            state["what"] = message.get("text", "")
+            if not state.get("what"):
+                # Prompt for what
+                send_quick_replies(sender_id, "What: What is the event?", [])
+                state["what"] = None
+                state["step"] = "what_response"
+            else:
+                state["step"] = "when"
+        elif step == "what_response":
+            state["what"] = text
             state["step"] = "when"
-            send_quick_replies(sender_id, "WHEN: When is the event? (e.g. 2024-06-10 15:00)", [])
-        elif step == "when":
-            state["when"] = message.get("text", "")
-            state["step"] = "where"
-            send_quick_replies(sender_id, "WHERE: Where is the event?", [])
-        elif step == "where":
-            state["where"] = message.get("text", "")
+        if step == "when":
+            if not state.get("when"):
+                send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
+                state["when"] = None
+                state["step"] = "when_response"
+            else:
+                state["step"] = "where"
+        elif step == "when_response":
+            # Validate date/time
+            try:
+                event_time = datetime.strptime(text, "%Y-%m-%d %H:%M")
+                state["when"] = text
+                state["step"] = "where"
+            except ValueError:
+                send_quick_replies(sender_id, "Invalid date/time format. Please use YYYY-MM-DD HH:MM (24-hour)", [])
+                return
+        if step == "where":
+            if not state.get("where"):
+                send_quick_replies(sender_id, "Where: Where is the event?", [])
+                state["where"] = None
+                state["step"] = "where_response"
+            else:
+                state["step"] = "description"
+        elif step == "where_response":
+            state["where"] = text
             state["step"] = "description"
-            send_quick_replies(sender_id, "DESCRIPTION: For what is this work for?", [])
-        elif step == "description":
-            state["description"] = message.get("text", "")
+        if step == "description":
+            if not state.get("description"):
+                send_quick_replies(sender_id, "Description: What is this work for?", [])
+                state["description"] = None
+                state["step"] = "description_response"
+            else:
+                state["step"] = "done"
+        elif step == "description_response":
+            state["description"] = text
+            state["step"] = "done"
+        if state.get("step") == "done":
             # Save event
             try:
-                event_time = datetime.fromisoformat(state["when"])
+                event_time = datetime.strptime(state["when"], "%Y-%m-%d %H:%M")
             except Exception:
                 event_time = None
             urgency = "critical" if event_time and (event_time - datetime.now()).total_seconds() < 3600 else ("urgent" if event_time and (event_time - datetime.now()).total_seconds() < 6*3600 else "normal")
@@ -844,7 +878,14 @@ def handle_user_message(sender_id, message):
                 "description": state["description"],
                 "urgency": urgency
             })
-            send_quick_replies(sender_id, f"Event added!\nWHAT: {state['what']}\nWHEN: {state['when']}\nWHERE: {state['where']}\nDESCRIPTION: {state['description']}", get_main_quick_replies())
+            summary = (
+                f"Event added!\n"
+                f"WHAT: {state['what']}\n"
+                f"WHEN: {state['when']}\n"
+                f"WHERE: {state['where']}\n"
+                f"DESCRIPTION: {state['description']}"
+            )
+            send_quick_replies(sender_id, summary, get_main_quick_replies())
             user_states[sender_id] = {}
             return
         user_states[sender_id] = state
@@ -854,7 +895,7 @@ def handle_user_message(sender_id, message):
     if quick_reply:
         if quick_reply == "ADD_EVENT":
             user_states[sender_id] = {"adding_event": True, "step": "what"}
-            send_quick_replies(sender_id, "WHAT: What is the event?", [])
+            send_quick_replies(sender_id, "What: What is the event?", [])
             return
         elif quick_reply == "URGENT_TASKS":
             urgent = [e for e in USER_EVENTS if e["user"] == sender_id and e["urgency"] in ("critical", "urgent")]
