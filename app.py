@@ -24,7 +24,7 @@ import os
 # Add Flask for Render deployment
 from flask import Flask, jsonify, request, send_file
 import io
-from PIL import Image, ImageDraw, ImageFont
+
 
 # Third-party imports for notifications
 try:
