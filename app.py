@@ -788,12 +788,11 @@ def facebook_webhook():
 def send_quick_replies(recipient_id, text, quick_replies):
     payload = {
         "recipient": {"id": recipient_id},
-        "message": {
-            "text": text,
-            "quick_replies": quick_replies
-        },
+        "message": {"text": text},
         "messaging_type": "RESPONSE"
     }
+    if quick_replies:  # Only add quick_replies if not empty
+        payload["message"]["quick_replies"] = quick_replies
     params = {"access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
     response = requests.post(
         "https://graph.facebook.com/v18.0/me/messages",
