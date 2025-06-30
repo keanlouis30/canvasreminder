@@ -831,7 +831,6 @@ def handle_user_message(sender_id, message):
 
         # Step 2: When
         elif step == "when":
-            # Should not happen, but just in case
             send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
             state["step"] = "when_response"
             user_states[sender_id] = state
@@ -908,13 +907,24 @@ def handle_user_message(sender_id, message):
                 msg = "URGENT TASKS TODAY:\n" + "\n".join(f"- {e['what']} at {e['when']} ({e['urgency']})" for e in urgent)
                 send_quick_replies(sender_id, msg, get_main_quick_replies())
             return
+        elif quick_reply == "ALL_TASKS":
+            all_tasks = [e for e in USER_EVENTS if e["user"] == sender_id]
+            if not all_tasks:
+                send_quick_replies(sender_id, "You have no tasks!", get_main_quick_replies())
+            else:
+                msg = "ALL TASKS:\n" + "\n".join(
+                    f"- {e['what']} at {e['when']} ({e['urgency']})\n  Where: {e['where']}\n  Description: {e['description']}" for e in all_tasks
+                )
+                send_quick_replies(sender_id, msg, get_main_quick_replies())
+            return
     # Default: show main menu
     send_quick_replies(sender_id, "What would you like to do?", get_main_quick_replies())
 
 def get_main_quick_replies():
     return [
         {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"},
-        {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"}
+        {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"},
+        {"content_type": "text", "title": "Get All Tasks", "payload": "ALL_TASKS"}
     ]
 
 def main():
