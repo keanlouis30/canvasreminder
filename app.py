@@ -39,6 +39,7 @@ FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv('FACEBOOK_PAGE_ACCESS_TOKEN', "your-defau
 FACEBOOK_PAGE_ID = os.getenv('FACEBOOK_PAGE_ID', "your-default-page-id")
 FACEBOOK_RECIPIENT_ID = os.getenv('FACEBOOK_RECIPIENT_ID', "your-default-recipient-id")
 FACEBOOK_VERIFY_TOKEN = os.getenv('FACEBOOK_VERIFY_TOKEN', "your-default-verify-token")
+PORT = int(os.getenv('PORT', 10000))
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -387,7 +388,7 @@ class CanvasReminderApp:
     def format_assignment_summary(self, assignments: List[Assignment]) -> str:
         """Format assignments summary for Facebook message"""
         if not assignments:
-            return "🎉 NO ASSIGNMENTS DUE SOON!\n\nYou're all caught up! Time to relax! 😊"
+            return "🎉 NO ASSIGNMENTS DUE SOON!\n\nYou're all caught up! 😊"
         
         # Group by urgency
         urgency_groups = {}
@@ -890,8 +891,7 @@ def main():
     app = CanvasReminderApp()
     
     if args.web:
-        port = int(os.environ.get("PORT", 10000))  # PORT is set by Render
-        flask_app.run(host="0.0.0.0", port=port)
+        flask_app.run(host="0.0.0.0", port=PORT)
         return
 
     if args.command == 'start':
