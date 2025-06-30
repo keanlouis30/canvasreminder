@@ -38,6 +38,7 @@ CANVAS_BASE_URL = os.getenv('CANVAS_BASE_URL', "https://dlsu.instructure.com/api
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv('FACEBOOK_PAGE_ACCESS_TOKEN', "your-default-token")
 FACEBOOK_PAGE_ID = os.getenv('FACEBOOK_PAGE_ID', "your-default-page-id")
 FACEBOOK_RECIPIENT_ID = os.getenv('FACEBOOK_RECIPIENT_ID', "your-default-recipient-id")
+FACEBOOK_VERIFY_TOKEN = os.getenv('FACEBOOK_VERIFY_TOKEN', "your-default-verify-token")
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -768,8 +769,7 @@ USER_EVENTS = []
 def facebook_webhook():
     if request.method == "GET":
         # Facebook webhook verification
-        verify_token = os.getenv("FB_VERIFY_TOKEN", "test-token")
-        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == verify_token:
+        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == FACEBOOK_VERIFY_TOKEN:
             return request.args.get("hub.challenge"), 200
         return "Verification token mismatch", 403
 
