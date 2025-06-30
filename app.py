@@ -766,7 +766,7 @@ class CanvasReminderApp:
         self.notification_service.send_facebook_message(summary_message)
 
 # In-memory event store (for demo; replace with DB for production)
-USER_EVENTS = []
+USER_EVENTS = []  # (No longer used, kept for legacy)
 
 # In-memory deduplication cache: stores (user_id, text, timestamp) for recent messages
 RECENT_MESSAGES = deque(maxlen=200)  # store up to 200 recent messages
@@ -848,118 +848,21 @@ def handle_user_message(sender_id, message):
     if mid:
         last_message_ids[sender_id] = mid
 
-    state = user_states.get(sender_id, {})
-
-    if state.get("adding_event"):
-        step = state.get("step", "what")
-        if step == "what":
-            send_quick_replies(sender_id, "What: What is the event?", [])
-            state["step"] = "what_response"
-            user_states[sender_id] = state
-            return
-        elif step == "what_response":
-            state["what"] = text
-            state["step"] = "when"
-            user_states[sender_id] = state
-            send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
-            return
-        elif step == "when":
-            send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
-            state["step"] = "when_response"
-            user_states[sender_id] = state
-            return
-        elif step == "when_response":
-            try:
-                event_time = datetime.strptime(text, "%Y-%m-%d %H:%M")
-                state["when"] = text
-                state["step"] = "where"
-                user_states[sender_id] = state
-                send_quick_replies(sender_id, "Where: Where is the event?", [])
-                return
-            except ValueError:
-                send_quick_replies(sender_id, "Invalid date/time format. Please use YYYY-MM-DD HH:MM (24-hour)", [])
-                return
-        elif step == "where":
-            send_quick_replies(sender_id, "Where: Where is the event?", [])
-            state["step"] = "where_response"
-            user_states[sender_id] = state
-            return
-        elif step == "where_response":
-            state["where"] = text
-            state["step"] = "description"
-            user_states[sender_id] = state
-            send_quick_replies(sender_id, "Description: What is this work for?", [])
-            return
-        elif step == "description":
-            send_quick_replies(sender_id, "Description: What is this work for?", [])
-            state["step"] = "description_response"
-            user_states[sender_id] = state
-            return
-        elif step == "description_response":
-            state["description"] = text
-            try:
-                event_time = datetime.strptime(state["when"], "%Y-%m-%d %H:%M")
-            except Exception:
-                event_time = None
-            urgency = "critical" if event_time and (event_time - datetime.now()).total_seconds() < 3600 else ("urgent" if event_time and (event_time - datetime.now()).total_seconds() < 6*3600 else "normal")
-            USER_EVENTS.append({
-                "user": sender_id,
-                "what": state["what"],
-                "when": state["when"],
-                "where": state["where"],
-                "description": state["description"],
-                "urgency": urgency
-            })
-            summary = (
-                f"*Event added!*\n"
-                f"*WHAT:* _{state['what']}_\n"
-                f"*WHEN:* `{state['when']}`\n"
-                f"*WHERE:* _{state['where']}_\n"
-                f"*DESCRIPTION:* _{state['description']}_"
-            )
-            send_quick_replies(sender_id, summary, get_main_quick_replies())
-            user_states[sender_id] = {}
-            return
-
     # Main menu quick replies
     if quick_reply:
-        if quick_reply == "ADD_EVENT":
-            user_states[sender_id] = {"adding_event": True, "step": "what"}
-            send_quick_replies(sender_id, "What: What is the event?", [])
-            return
-        elif quick_reply == "URGENT_TASKS":
-            urgent = [e for e in USER_EVENTS if e["user"] == sender_id and e["urgency"] in ("critical", "urgent")]
-            if not urgent:
-                send_quick_replies(sender_id, "No urgent tasks for today!", get_main_quick_replies())
-            else:
-                msg = "*URGENT TASKS TODAY:*\n" + "\n".join(f"*{e['what']}* at `{e['when']}` (*_{e['urgency'].upper()}_*)" for e in urgent)
-                send_quick_replies(sender_id, msg, get_main_quick_replies())
+        if quick_reply == "URGENT_TASKS":
+            send_quick_replies(sender_id, "No urgent tasks for today!", get_main_quick_replies())
             return
         elif quick_reply == "ALL_TASKS":
-            all_events = [e for e in USER_EVENTS if e["user"] == sender_id]
             app = CanvasReminderApp()
             app.update_assignments()
             canvas_assignments = app.assignments_cache
-            send_all_tasks_individually(sender_id, all_events, canvas_assignments)
+            send_all_tasks_individually(sender_id, canvas_assignments)
             return
     send_quick_replies(sender_id, "What would you like to do?", get_main_quick_replies())
 
-def send_all_tasks_individually(sender_id, user_events, canvas_assignments):
-    # Send user events
-    if user_events:
-        for e in user_events:
-            msg = (
-                f"*Custom Event*\n"
-                f"*Title:* _{e['what']}_\n"
-                f"*When:* `{e['when']}`\n"
-                f"*Where:* _{e['where']}_\n"
-                f"*Description:* _{e['description']}_\n"
-                f"*Urgency:* *_{e['urgency'].upper()}_*"
-            )
-            send_quick_replies(sender_id, msg, [])
-    else:
-        send_quick_replies(sender_id, "You have no custom events!", [])
-    # Send Canvas assignments
+def send_all_tasks_individually(sender_id, canvas_assignments):
+    # Only send Canvas assignments
     if canvas_assignments:
         for a in canvas_assignments:
             due_str = a.due_datetime.strftime('%Y-%m-%d %H:%M') if a.due_datetime else 'No due date'
@@ -996,7 +899,6 @@ def format_all_tasks_message(user_events, canvas_assignments):
 
 def get_main_quick_replies():
     return [
-        {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"},
         {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"},
         {"content_type": "text", "title": "Get All Tasks", "payload": "ALL_TASKS"}
     ]
