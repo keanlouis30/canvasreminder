@@ -815,54 +815,60 @@ def handle_user_message(sender_id, message):
     # If in the middle of adding event
     if state.get("adding_event"):
         step = state.get("step", "what")
+
+        # Step 1: What
         if step == "what":
-            if not state.get("what"):
-                # Prompt for what
-                send_quick_replies(sender_id, "What: What is the event?", [])
-                state["what"] = None
-                state["step"] = "what_response"
-            else:
-                state["step"] = "when"
+            send_quick_replies(sender_id, "What: What is the event?", [])
+            state["step"] = "what_response"
+            user_states[sender_id] = state
+            return
         elif step == "what_response":
             state["what"] = text
             state["step"] = "when"
-        if step == "when":
-            if not state.get("when"):
-                send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
-                state["when"] = None
-                state["step"] = "when_response"
-            else:
-                state["step"] = "where"
+            user_states[sender_id] = state
+            send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
+            return
+
+        # Step 2: When
+        elif step == "when":
+            # Should not happen, but just in case
+            send_quick_replies(sender_id, "When: Please enter the date and time (YYYY-MM-DD HH:MM, 24-hour)", [])
+            state["step"] = "when_response"
+            user_states[sender_id] = state
+            return
         elif step == "when_response":
-            # Validate date/time
             try:
                 event_time = datetime.strptime(text, "%Y-%m-%d %H:%M")
                 state["when"] = text
                 state["step"] = "where"
+                user_states[sender_id] = state
+                send_quick_replies(sender_id, "Where: Where is the event?", [])
+                return
             except ValueError:
                 send_quick_replies(sender_id, "Invalid date/time format. Please use YYYY-MM-DD HH:MM (24-hour)", [])
                 return
-        if step == "where":
-            if not state.get("where"):
-                send_quick_replies(sender_id, "Where: Where is the event?", [])
-                state["where"] = None
-                state["step"] = "where_response"
-            else:
-                state["step"] = "description"
+
+        # Step 3: Where
+        elif step == "where":
+            send_quick_replies(sender_id, "Where: Where is the event?", [])
+            state["step"] = "where_response"
+            user_states[sender_id] = state
+            return
         elif step == "where_response":
             state["where"] = text
             state["step"] = "description"
-        if step == "description":
-            if not state.get("description"):
-                send_quick_replies(sender_id, "Description: What is this work for?", [])
-                state["description"] = None
-                state["step"] = "description_response"
-            else:
-                state["step"] = "done"
+            user_states[sender_id] = state
+            send_quick_replies(sender_id, "Description: What is this work for?", [])
+            return
+
+        # Step 4: Description
+        elif step == "description":
+            send_quick_replies(sender_id, "Description: What is this work for?", [])
+            state["step"] = "description_response"
+            user_states[sender_id] = state
+            return
         elif step == "description_response":
             state["description"] = text
-            state["step"] = "done"
-        if state.get("step") == "done":
             # Save event
             try:
                 event_time = datetime.strptime(state["when"], "%Y-%m-%d %H:%M")
@@ -887,8 +893,6 @@ def handle_user_message(sender_id, message):
             send_quick_replies(sender_id, summary, get_main_quick_replies())
             user_states[sender_id] = {}
             return
-        user_states[sender_id] = state
-        return
 
     # Main menu quick replies
     if quick_reply:
