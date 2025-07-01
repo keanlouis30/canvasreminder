@@ -853,6 +853,48 @@ def handle_user_message(sender_id, message):
     if mid:
         last_message_ids[sender_id] = mid
 
+    # --- Add Event Flow (single message, line by line) ---
+    state = user_states.get(sender_id, {})
+    if state.get('flow') == 'add_event_waiting_input':
+        # Expecting a single message with 4 lines
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        if len(lines) < 4:
+            send_quick_replies(sender_id, "❗ Please provide all 4 fields, one per line.\nFormat:\n1. Title\n2. When (e.g. 2024-06-30 18:00)\n3. Where\n4. Short description", [])
+            return
+        event_data = {
+            'what': lines[0],
+            'when': lines[1],
+            'where': lines[2],
+            'description': lines[3],
+        }
+        # Optionally, parse urgency from date
+        try:
+            due_dt = datetime.strptime(event_data['when'], '%Y-%m-%d %H:%M')
+            now = datetime.now()
+            hours_until = (due_dt - now).total_seconds() / 3600
+            if hours_until < 0:
+                urgency = 'overdue'
+            elif hours_until < 1:
+                urgency = 'critical'
+            elif hours_until < 6:
+                urgency = 'urgent'
+            elif hours_until < 24:
+                urgency = 'today'
+            elif hours_until < 48:
+                urgency = 'tomorrow'
+            elif hours_until < 168:
+                urgency = 'this_week'
+            else:
+                urgency = 'upcoming'
+        except Exception:
+            urgency = 'unknown'
+        event_data['urgency'] = urgency
+        USER_EVENTS.append(event_data)
+        send_quick_replies(sender_id, f"✅ Event added!\n\nTitle: {event_data['what']}\nWhen: {event_data['when']}\nWhere: {event_data['where']}\nDescription: {event_data['description']}", get_main_quick_replies())
+        user_states.pop(sender_id, None)
+        return
+    # --- End Add Event Flow ---
+
     # Main menu quick replies
     if quick_reply:
         if quick_reply == "URGENT_TASKS":
@@ -863,6 +905,10 @@ def handle_user_message(sender_id, message):
             app.update_assignments()
             canvas_assignments = app.assignments_cache
             send_all_tasks_individually(sender_id, canvas_assignments)
+            return
+        elif quick_reply == "ADD_EVENT":
+            send_quick_replies(sender_id, "Please provide your event in this format (one per line):\n1. Title\n2. When (e.g. 2024-06-30 18:00)\n3. Where\n4. Short description", [])
+            user_states[sender_id] = {'flow': 'add_event_waiting_input'}
             return
     send_quick_replies(sender_id, "What would you like to do?", get_main_quick_replies())
 
@@ -912,7 +958,8 @@ def format_all_tasks_message(user_events, canvas_assignments):
 def get_main_quick_replies():
     return [
         {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"},
-        {"content_type": "text", "title": "Get All Tasks", "payload": "ALL_TASKS"}
+        {"content_type": "text", "title": "Get All Tasks", "payload": "ALL_TASKS"},
+        {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"}
     ]
 
 def main():
