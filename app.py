@@ -769,11 +769,6 @@ class CanvasReminderApp:
 # In-memory event store (for demo; replace with DB for production)
 USER_EVENTS = []  # (No longer used, kept for legacy)
 
-# In-memory deduplication cache: stores (user_id, text, timestamp) for recent messages
-RECENT_MESSAGES = deque(maxlen=200)  # store up to 200 recent messages
-RECENT_MESSAGES_LOCK = threading.Lock()
-DEDUPLICATION_WINDOW_SECONDS = 120  # 2 minutes
-
 RANDOM_EMOJIS = [
     '📚', '📝', '💡', '🎯', '📖', '🧠', '✨', '🚀', '🎓', '🔔', '📅', '🕒', '🔬', '💻', '🎨', '🏆', '🧮', '🏛️', '💼', '🤝', '🏃'
 ]
@@ -794,26 +789,7 @@ def facebook_webhook():
             for messaging_event in entry.get("messaging", []):
                 sender_id = messaging_event["sender"]["id"]
                 if "message" in messaging_event:
-                    # Deduplication by (user_id, text, timestamp window)
                     message = messaging_event["message"]
-                    text = message.get("text", "").strip()
-                    ts = messaging_event.get("timestamp")
-                    is_duplicate = False
-                    now = int(time.time() * 1000)  # ms
-                    with RECENT_MESSAGES_LOCK:
-                        # Remove old entries
-                        while RECENT_MESSAGES and now - RECENT_MESSAGES[0][2] > DEDUPLICATION_WINDOW_SECONDS * 1000:
-                            RECENT_MESSAGES.popleft()
-                        # Check for duplicate
-                        for uid, t, tstamp in RECENT_MESSAGES:
-                            if uid == sender_id and t == text and abs(ts - tstamp) < DEDUPLICATION_WINDOW_SECONDS * 1000:
-                                is_duplicate = True
-                                break
-                        if not is_duplicate:
-                            RECENT_MESSAGES.append((sender_id, text, ts))
-                    if is_duplicate:
-                        logger.info(f"Duplicate message detected for user {sender_id}, text '{text}', ts {ts}, skipping.")
-                        continue
                     handle_user_message(sender_id, message)
     return "ok", 200
 
@@ -835,6 +811,55 @@ def send_quick_replies(recipient_id, text, quick_replies):
     logger.info(f"Quick replies sent: {response.text}")
     return response.ok
 
+def get_todays_tasks(sender_id, app=None):
+    """Send today's tasks (Canvas assignments and user events) to the user."""
+    # Get today's date in local time
+    today = datetime.now().date()
+    # Get Canvas assignments due today
+    if app is None:
+        app = CanvasReminderApp()
+        app.update_assignments()
+    assignments_today = [
+        a for a in app.assignments_cache
+        if a.due_datetime and a.due_datetime.astimezone().date() == today
+    ]
+    # Get user events due today
+    events_today = []
+    for e in USER_EVENTS:
+        try:
+            event_dt = datetime.strptime(e['when'], '%Y-%m-%d %H:%M')
+            if event_dt.date() == today:
+                events_today.append(e)
+        except Exception:
+            continue
+    # Format message
+    lines = ["📅 *Today's Tasks*\n====================\n"]
+    if not assignments_today and not events_today:
+        lines.append("🎉 No tasks due today! Enjoy your day!")
+    else:
+        if assignments_today:
+            lines.append("*Canvas Assignments:*\n")
+            for a in assignments_today:
+                due_str = a.due_datetime.strftime('%H:%M') if a.due_datetime else 'No due time'
+                points = f"{a.points_possible}pts" if a.points_possible else "No pts"
+                lines.append(f"- {a.name} ({due_str})\n  📖 {a.course_name}\n  🎯 {points}\n  🔗 {a.html_url}\n")
+        if events_today:
+            lines.append("*Your Events:*\n")
+            urgency_visuals = {
+                'overdue':    ('❗', 'Overdue'),
+                'critical':   ('🚨', 'Critical (Due < 1h)'),
+                'urgent':     ('⚠️', 'Urgent (Due < 6h)'),
+                'today':      ('🔥', 'Due Today'),
+                'tomorrow':   ('⏰', 'Due Tomorrow'),
+                'this_week':  ('📅', 'Due This Week'),
+                'upcoming':   ('📋', 'Upcoming'),
+                'unknown':    ('❓', 'Unknown'),
+            }
+            for e in events_today:
+                emoji, label = urgency_visuals.get(e.get('urgency', 'unknown'), ('❓', 'Unknown'))
+                lines.append(f"- {emoji} {e['what']} ({e['when']})\n  {e['where']}\n  {e['description']}\n  Urgency: {label}\n")
+    send_quick_replies(sender_id, "\n".join(lines), get_main_quick_replies())
+
 def handle_user_message(sender_id, message):
     text = message.get("text", "").strip()
     quick_reply = message.get("quick_reply", {}).get("payload")
@@ -845,13 +870,6 @@ def handle_user_message(sender_id, message):
         handle_user_message.last_message_ids = {}
     user_states = handle_user_message.user_states
     last_message_ids = handle_user_message.last_message_ids
-
-    # Deduplication: skip if we've already processed this message ID for this user
-    if mid and last_message_ids.get(sender_id) == mid:
-        logger.info(f"Duplicate message detected for user {sender_id}, mid {mid}, skipping.")
-        return
-    if mid:
-        last_message_ids[sender_id] = mid
 
     # --- Add Event Flow (single message, line by line) ---
     state = user_states.get(sender_id, {})
@@ -890,7 +908,28 @@ def handle_user_message(sender_id, message):
             urgency = 'unknown'
         event_data['urgency'] = urgency
         USER_EVENTS.append(event_data)
-        send_quick_replies(sender_id, f"✅ Event added!\n\nTitle: {event_data['what']}\nWhen: {event_data['when']}\nWhere: {event_data['where']}\nDescription: {event_data['description']}", get_main_quick_replies())
+        # Add emoji and label for urgency
+        urgency_visuals = {
+            'overdue':    ('❗', 'Overdue'),
+            'critical':   ('🚨', 'Critical (Due < 1h)'),
+            'urgent':     ('⚠️', 'Urgent (Due < 6h)'),
+            'today':      ('🔥', 'Due Today'),
+            'tomorrow':   ('⏰', 'Due Tomorrow'),
+            'this_week':  ('📅', 'Due This Week'),
+            'upcoming':   ('📋', 'Upcoming'),
+            'unknown':    ('❓', 'Unknown'),
+        }
+        emoji, label = urgency_visuals.get(urgency, ('❓', 'Unknown'))
+        send_quick_replies(
+            sender_id,
+            f"{emoji} Event added!\n\n"
+            f"*Title:* {event_data['what']}\n"
+            f"*When:* {event_data['when']}\n"
+            f"*Where:* {event_data['where']}\n"
+            f"*Description:* {event_data['description']}\n"
+            f"*Urgency:* {label}",
+            get_main_quick_replies()
+        )
         user_states.pop(sender_id, None)
         return
     # --- End Add Event Flow ---
@@ -905,6 +944,11 @@ def handle_user_message(sender_id, message):
             app.update_assignments()
             canvas_assignments = app.assignments_cache
             send_all_tasks_individually(sender_id, canvas_assignments)
+            return
+        elif quick_reply == "GET_TODAYS_TASKS":
+            app = CanvasReminderApp()
+            app.update_assignments()
+            get_todays_tasks(sender_id, app)
             return
         elif quick_reply == "ADD_EVENT":
             send_quick_replies(sender_id, "Please provide your event in this format (one per line):\n1. Title\n2. When (e.g. 2024-06-30 18:00)\n3. Where\n4. Short description", [])
@@ -959,6 +1003,7 @@ def get_main_quick_replies():
     return [
         {"content_type": "text", "title": "Give Urgent Tasks", "payload": "URGENT_TASKS"},
         {"content_type": "text", "title": "Get All Tasks", "payload": "ALL_TASKS"},
+        {"content_type": "text", "title": "Get Today's Tasks", "payload": "GET_TODAYS_TASKS"},
         {"content_type": "text", "title": "Add Event", "payload": "ADD_EVENT"}
     ]
 
