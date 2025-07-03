@@ -58,49 +58,16 @@ logger = logging.getLogger(__name__)
 # This section enables deployment on Render and does not affect CLI usage.
 flask_app = Flask(__name__)
 
-# Duplicate message detection
-RECENT_MESSAGE_IDS = deque(maxlen=1000)  # Store last 1000 message IDs
-MESSAGE_ID_LOCK = threading.Lock()  # Thread-safe access to message IDs
-
 # Self-ping mechanism to keep webhook alive
 SELF_PING_INTERVAL_MIN = 6  # Minimum minutes between pings
 SELF_PING_INTERVAL_MAX = 14  # Maximum minutes between pings
 SELF_PING_ACTIVE = True  # Flag to control self-ping functionality
 
-def is_duplicate_message(message_id: str) -> bool:
-    """Check if a message ID has been processed recently"""
-    with MESSAGE_ID_LOCK:
-        if message_id in RECENT_MESSAGE_IDS:
-            logger.debug(f"Duplicate message ID detected: {message_id}")
-            return True
-        RECENT_MESSAGE_IDS.append(message_id)
-        logger.debug(f"New message ID added to tracking: {message_id} (Total tracked: {len(RECENT_MESSAGE_IDS)})")
-        return False
-
-def get_duplicate_detection_stats() -> dict:
-    """Get statistics about the duplicate detection system"""
-    with MESSAGE_ID_LOCK:
-        return {
-            "total_tracked_messages": len(RECENT_MESSAGE_IDS),
-            "max_capacity": RECENT_MESSAGE_IDS.maxlen
-        }
-
-def get_self_ping_stats() -> dict:
-    """Get statistics about the self-ping system"""
-    return {
-        "active": SELF_PING_ACTIVE,
-        "interval_min": SELF_PING_INTERVAL_MIN,
-        "interval_max": SELF_PING_INTERVAL_MAX,
-        "scheduled_jobs": len([job for job in schedule.jobs if 'self_ping' in job.tags])
-    }
-
 def send_self_ping():
     """Send a self-ping to keep the webhook alive"""
     if not SELF_PING_ACTIVE:
         return
-    
     try:
-        # Generate a random ping message
         ping_messages = [
             "🤖 System ping - Webhook alive",
             "💓 Heartbeat - All systems operational",
@@ -111,10 +78,7 @@ def send_self_ping():
             "⚡ Pulse check - Webhook healthy",
             "🎯 Alive ping - Canvas Reminder running"
         ]
-        
         ping_message = random.choice(ping_messages)
-        
-        # Send ping to Facebook Messenger if configured
         if FACEBOOK_PAGE_ACCESS_TOKEN and FACEBOOK_RECIPIENT_ID:
             try:
                 payload = {
@@ -123,9 +87,7 @@ def send_self_ping():
                     "messaging_type": "MESSAGE_TAG",
                     "tag": "ACCOUNT_UPDATE"
                 }
-                
                 params = {"access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
-                
                 response = requests.post(
                     "https://graph.facebook.com/v18.0/me/messages",
                     params=params,
@@ -133,18 +95,13 @@ def send_self_ping():
                     headers={"Content-Type": "application/json"},
                     timeout=10
                 )
-                
                 if response.ok:
                     logger.info(f"Self-ping sent successfully: {ping_message}")
                 else:
                     logger.warning(f"Self-ping failed with status {response.status_code}")
-                    
             except Exception as e:
                 logger.error(f"Failed to send self-ping to Facebook: {e}")
-        
-        # Also log to console for monitoring
         logger.info(f"Self-ping executed: {ping_message}")
-        
     except Exception as e:
         logger.error(f"Self-ping function error: {e}")
 
@@ -152,16 +109,9 @@ def schedule_next_self_ping():
     """Schedule the next self-ping at a random interval"""
     if not SELF_PING_ACTIVE:
         return
-    
-    # Generate random interval between min and max
     interval_minutes = random.randint(SELF_PING_INTERVAL_MIN, SELF_PING_INTERVAL_MAX)
-    
-    # Schedule the ping
     schedule.every(interval_minutes).minutes.do(send_self_ping).tag('self_ping')
-    
-    # Schedule the next ping scheduling
     schedule.every(interval_minutes).minutes.do(schedule_next_self_ping).tag('self_ping_scheduler')
-    
     logger.info(f"Next self-ping scheduled in {interval_minutes} minutes")
 
 @flask_app.route("/")
@@ -722,9 +672,7 @@ class CanvasReminderApp:
         
         # Initialize self-ping mechanism
         if SELF_PING_ACTIVE:
-            # Send initial ping immediately
-            send_self_ping()
-            # Schedule next ping
+            send_self_ping()  # Send initial ping immediately
             schedule_next_self_ping()
             logger.info("Self-ping mechanism initialized and first ping sent")
         
@@ -919,12 +867,9 @@ RANDOM_EMOJIS = [
 @flask_app.route("/webhook", methods=["GET", "POST"])
 def facebook_webhook():
     if request.method == "GET":
-        # Facebook webhook verification
         if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == FACEBOOK_VERIFY_TOKEN:
             return request.args.get("hub.challenge"), 200
         return "Verification token mismatch", 403
-
-    # POST: handle incoming messages
     data = request.get_json()
     logger.info(f"Received webhook: {json.dumps(data)}")
     if data.get("object") == "page":
@@ -933,13 +878,6 @@ def facebook_webhook():
                 sender_id = messaging_event["sender"]["id"]
                 if "message" in messaging_event:
                     message = messaging_event["message"]
-                    message_id = message.get("mid")
-                    
-                    # Check for duplicate message
-                    if message_id and is_duplicate_message(message_id):
-                        logger.info(f"Duplicate message detected and ignored: {message_id}")
-                        continue
-                    
                     handle_user_message(sender_id, message)
     return "ok", 200
 
@@ -1014,12 +952,6 @@ def handle_user_message(sender_id, message):
     text = message.get("text", "").strip()
     quick_reply = message.get("quick_reply", {}).get("payload")
     mid = message.get("mid")
-    
-    # Additional duplicate check at function level
-    if mid and is_duplicate_message(mid):
-        logger.info(f"Duplicate message detected in handle_user_message: {mid}")
-        return
-    
     if not hasattr(handle_user_message, "user_states"):
         handle_user_message.user_states = {}
     if not hasattr(handle_user_message, "last_message_ids"):
@@ -1181,8 +1113,12 @@ def main():
     app = CanvasReminderApp()
     
     if args.web:
+        if SELF_PING_ACTIVE:
+            send_self_ping()  # Send initial ping immediately in web mode
+            schedule_next_self_ping()
+            logger.info("Self-ping mechanism initialized and first ping sent (web mode)")
         flask_app.run(host="0.0.0.0", port=PORT)
-        return
+        exit()
 
     if args.command == 'start':
         print("Starting Canvas Reminder daemon...")
