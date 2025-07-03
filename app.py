@@ -58,62 +58,6 @@ logger = logging.getLogger(__name__)
 # This section enables deployment on Render and does not affect CLI usage.
 flask_app = Flask(__name__)
 
-# Self-ping mechanism to keep webhook alive
-SELF_PING_INTERVAL_MIN = 6  # Minimum minutes between pings
-SELF_PING_INTERVAL_MAX = 14  # Maximum minutes between pings
-SELF_PING_ACTIVE = True  # Flag to control self-ping functionality
-
-def send_self_ping():
-    """Send a self-ping to keep the webhook alive"""
-    if not SELF_PING_ACTIVE:
-        return
-    try:
-        ping_messages = [
-            "🤖 System ping - Webhook alive",
-            "💓 Heartbeat - All systems operational",
-            "🔔 Ping - Canvas Reminder active",
-            "✅ Status check - Webhook responsive",
-            "🌐 Connection test - Server online",
-            "📡 Signal ping - Service monitoring",
-            "⚡ Pulse check - Webhook healthy",
-            "🎯 Alive ping - Canvas Reminder running"
-        ]
-        ping_message = random.choice(ping_messages)
-        if FACEBOOK_PAGE_ACCESS_TOKEN and FACEBOOK_RECIPIENT_ID:
-            try:
-                payload = {
-                    "recipient": {"id": FACEBOOK_RECIPIENT_ID},
-                    "message": {"text": ping_message},
-                    "messaging_type": "MESSAGE_TAG",
-                    "tag": "ACCOUNT_UPDATE"
-                }
-                params = {"access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
-                response = requests.post(
-                    "https://graph.facebook.com/v18.0/me/messages",
-                    params=params,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=10
-                )
-                if response.ok:
-                    logger.info(f"Self-ping sent successfully: {ping_message}")
-                else:
-                    logger.warning(f"Self-ping failed with status {response.status_code}")
-            except Exception as e:
-                logger.error(f"Failed to send self-ping to Facebook: {e}")
-        logger.info(f"Self-ping executed: {ping_message}")
-    except Exception as e:
-        logger.error(f"Self-ping function error: {e}")
-
-def schedule_next_self_ping():
-    """Schedule the next self-ping at a random interval"""
-    if not SELF_PING_ACTIVE:
-        return
-    interval_minutes = random.randint(SELF_PING_INTERVAL_MIN, SELF_PING_INTERVAL_MAX)
-    schedule.every(interval_minutes).minutes.do(send_self_ping).tag('self_ping')
-    schedule.every(interval_minutes).minutes.do(schedule_next_self_ping).tag('self_ping_scheduler')
-    logger.info(f"Next self-ping scheduled in {interval_minutes} minutes")
-
 @flask_app.route("/")
 def health_check():
     # Health check endpoint for Render
@@ -670,12 +614,6 @@ class CanvasReminderApp:
         # Update assignments every 2 hours
         schedule.every(2).hours.do(self.update_assignments)
         
-        # Initialize self-ping mechanism
-        if SELF_PING_ACTIVE:
-            send_self_ping()  # Send initial ping immediately
-            schedule_next_self_ping()
-            logger.info("Self-ping mechanism initialized and first ping sent")
-        
         logger.info("Reminder schedule configured")
     
     def run_once(self):
@@ -1113,10 +1051,6 @@ def main():
     app = CanvasReminderApp()
     
     if args.web:
-        if SELF_PING_ACTIVE:
-            send_self_ping()  # Send initial ping immediately in web mode
-            schedule_next_self_ping()
-            logger.info("Self-ping mechanism initialized and first ping sent (web mode)")
         flask_app.run(host="0.0.0.0", port=PORT)
         exit()
 
